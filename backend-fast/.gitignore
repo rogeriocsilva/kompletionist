@@ -3,3 +3,4 @@ cache.json
 .env
 .venv
 cached_images
+parsed_data.db
