@@ -9,10 +9,14 @@ import asyncio
 import json
 import hashlib
 import aiosqlite
+import aiofiles
 
 from ..config import get_settings
 
 yaml_settings = dict()
+
+SEM = asyncio.Semaphore(5)  # Limit concurrent requests to prevent rate-limiting
+IMAGE_CACHE_DIR = Path("cached_images")
 
 def parse_yaml_files(directory: str):
     path = Path(directory)
@@ -88,25 +92,28 @@ async def fetch_json(session, url, headers=None):
             return await response.json()
         return None
 
-SEM = asyncio.Semaphore(5)  # Limit concurrent requests to prevent rate-limiting
 
 async def fetch_json(session, url, headers=None):
-    """Fetch JSON data from a URL with error handling."""
+    """Fetch JSON data from a URL with rate limiting."""
     async with SEM:
         try:
             async with session.get(url, headers=headers) as response:
                 if response.status == 200:
                     return await response.json()
-                return None
         except aiohttp.ClientError:
-            return None
+            pass
+    return None
 
 async def fetch_tmdb_details(session, movie_id):
     """Fetch movie details from TMDb API."""
     settings = get_settings()
 
     url = f"https://api.themoviedb.org/3/movie/{movie_id}?api_key={settings.tmdb_api_key}&language=en-US"
-    return await fetch_json(session, url)
+    data = await fetch_json(session, url)
+    
+    if data and "poster_path" in data:
+        data["cached_poster"] = await cache_poster(session, data["poster_path"], movie_id, "movie")
+    return data
 
 async def fetch_tvdb_details(session, show_id):
     """Fetch TV show details from TVDb API."""
@@ -114,10 +121,15 @@ async def fetch_tvdb_details(session, show_id):
 
     url = f"https://api4.thetvdb.com/v4/series/{show_id}"
     headers = {"Authorization": f"Bearer {settings.tvdb_api_key}"}
-    return await fetch_json(session, url, headers=headers)
+    data = await fetch_json(session, url, headers=headers)
+    
+    if data and "data" in data and "image" in data["data"]:
+        data["cached_poster"] = await cache_poster(session, data["data"]["image"], show_id, "show")
+    return data
+
 
 async def fetch_media_details():
-    """Fetch details for movies and shows asynchronously and update SQLite."""
+    """Fetch and update media details, including poster caching."""
     async with aiosqlite.connect("parsed_data.db") as db:
         async with db.execute("SELECT id FROM movies WHERE details IS NULL") as cursor:
             movie_ids = [row[0] for row in await cursor.fetchall()]
@@ -141,6 +153,26 @@ async def fetch_media_details():
                 await db.execute("UPDATE shows SET details = ? WHERE id = ?", (json.dumps(details), show_id))
 
         await db.commit()
+
+async def cache_poster(session, poster_url, media_id, media_type):
+    """Download and cache movie/show posters locally."""
+    if not poster_url:
+        return None
+    
+    ext = Path(poster_url).suffix or ".jpg"
+    filename = f"{media_type}_{media_id}{ext}"
+    file_path = IMAGE_CACHE_DIR / filename
+    
+    if file_path.exists():
+        return f"/images/{filename}"  # Return cached URL
+
+    async with session.get(f"https://image.tmdb.org/t/p/w500{poster_url}") as response:
+        if response.status == 200:
+            async with aiofiles.open(file_path, "wb") as f:
+                await f.write(await response.read())
+            return f"/images/{filename}"
+    
+    return None
 
 def paginated_movies(page, per_page):
     conn = sqlite3.connect("parsed_data.db", check_same_thread=False)

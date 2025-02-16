@@ -14,8 +14,8 @@ app = FastAPI()
 
 # Cache configuration
 media_cache = TTLCache(maxsize=1000, ttl=3600)  # Cache for 1 hour
-image_cache_dir = Path("cached_images")
-image_cache_dir.mkdir(exist_ok=True)
+IMAGE_CACHE_DIR = Path("cached_images")
+IMAGE_CACHE_DIR.mkdir(exist_ok=True)
 
 # Serve cached images
 app.mount("/images", StaticFiles(directory="cached_images"), name="images")
