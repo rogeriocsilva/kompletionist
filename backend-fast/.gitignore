@@ -1,5 +1,5 @@
 /data
 cache.json
-
+.env
 .venv
 cached_images
