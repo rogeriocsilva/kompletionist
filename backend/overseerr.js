@@ -3,12 +3,14 @@ import dotenv from "dotenv";
 
 dotenv.config();
 
+const OVERSEERR_URL = process.env.OVERSEERR_URL;
+const OVERSEERR_API_KEY = process.env.OVERSEERR_API_KEY;
+
 async function checkOverseerrStatus(mediaId, status) {
-  const url = `${process.env.OVERSEERR_URL}/requests`;
   try {
-    const response = await axios.get(url, {
+    const response = await axios.get(`${OVERSEERR_URL}/requests`, {
       params: { mediaId, mediaType: status === "added" ? "movie" : "show" },
-      headers: { "X-Api-Key": process.env.OVERSEERR_API_KEY },
+      headers: { "X-Api-Key": OVERSEERR_API_KEY },
     });
     return response.data.data.length > 0;
   } catch (error) {
@@ -18,19 +20,15 @@ async function checkOverseerrStatus(mediaId, status) {
 }
 
 export async function requestMediaInOverseerr(mediaId, mediaType) {
-  const OVERSEERR_API_URL = `${process.env.OVERSEERR_URL}/api/v1`; // Replace with your Overseerr API URL
-  const OVERSEERR_API_KEY = process.env.OVERSEERR_API_KEY; // Ensure the API key is in your .env file
-
   try {
-    // Media type should be either "movie" (for TMDb ID) or "show" (for TVDb ID)
     const response = await axios.post(
-      `${OVERSEERR_API_URL}/request`,
+      `${OVERSEERR_URL}/api/v1/request`,
       {
-        mediaId: Number(mediaId), // TMDb ID for movies, TVDb ID for TV shows
-        mediaType: mediaType, // Either "movie" for movies or "show" for TV shows
+        mediaId: Number(mediaId),
+        mediaType: mediaType,
       },
       {
-        headers: { "X-Api-Key": process.env.OVERSEERR_API_KEY },
+        headers: { "X-Api-Key": OVERSEERR_API_KEY },
       }
     );
 

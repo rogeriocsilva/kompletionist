@@ -6,13 +6,8 @@ import path from "path";
 import axios from "axios";
 import yaml from "js-yaml";
 
-import {
-  getShowDetailsFromTVDb,
-  getMovieDetailsFromTMDb,
-  getCachedData,
-  searchInData,
-  parseYAML,
-} from "./utils";
+import { getCachedData, searchInData, parseYAML } from "./utils";
+
 import { requestMediaInOverseerr } from "./overseerr";
 
 dotenv.config();
@@ -24,15 +19,19 @@ app.use(cors());
 app.use(express.json());
 
 app.get("/api/search", async (req, res) => {
-  const keyword = req.query.keyword;
-  if (!keyword) {
-    return res.status(400).json({ error: "Keyword is required" });
+  const query = req.query.query;
+  if (!query) {
+    return res.status(400).json({ error: "query is required" });
   }
 
   try {
     const data = await getCachedData();
-    const results = searchInData(data, keyword);
-    res.json(results);
+    if (data) {
+      const results = searchInData(data, query);
+      return res.json(results);
+    }
+
+    res.status(500).json({ error: "Searching error" });
   } catch (error) {
     console.error("Searching error:", error);
     res.status(500).json({ error: "Searching error" });
@@ -42,7 +41,12 @@ app.get("/api/search", async (req, res) => {
 app.get("/api/collections", async (req, res) => {
   try {
     const data = await getCachedData();
-    res.json(data);
+
+    if (data) {
+      return res.json(data);
+    }
+
+    res.status(500).json({ error: "Processing error" });
   } catch (error) {
     console.error("Fetching error:", error);
     res.status(500).json({ error: "Processing error" });

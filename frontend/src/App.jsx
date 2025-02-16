@@ -1,26 +1,19 @@
-import { useEffect, useState } from "react";
-import axios from "axios";
+import { useState, useEffect } from "react";
 
 import MediaSearch from "./MediaSearch";
 
 import placeholder from "./assets/placeholder.jpg";
+import { useCollection, useRequestMedia } from "./api";
 
 const TMDB_IMAGE_URL = "https://image.tmdb.org/t/p/w500/";
 const TVDB_IMAGE_URL = "https://www.thetvdb.com/banners/";
-const API_URL = "http://localhost:5001/api";
 
 function App() {
-  const [collections, setCollections] = useState([]);
-  const [loading, setLoading] = useState(false);
+  const [searchTerm, setSearchTerm] = useState("");
+  const [debounceValue, setDebounceValue] = useState("");
 
-  useEffect(() => {
-    axios
-      .get(`${API_URL}/collections`)
-      .then((response) => {
-        setCollections(response.data);
-      })
-      .catch((error) => console.error("Erro ao carregar coleções", error));
-  }, []);
+  const { data, isError, isLoading } = useCollection();
+  const { mutate: requestMediaFn, isLoading: isRequesting } = useRequestMedia();
 
   const renderPoster = (item) => {
     if (item.tmdbDetails && item.tmdbDetails.poster_path) {
@@ -53,68 +46,95 @@ function App() {
   };
 
   const requestMedia = async (item) => {
-    try {
-      setLoading(true);
-      await axios.post(`${API_URL}/request`, {
-        mediaId: item.id,
-        mediaType: item.tvdbDetails ? "show" : "movie",
-      });
-      setLoading(false);
-    } catch (error) {
-      console.err(error);
-      setLoading(false);
-    }
+    await requestMediaFn(item);
   };
+
+  useEffect(() => {
+    const handler = setTimeout(() => {
+      setSearchTerm(debounceValue);
+    }, 500);
+
+    return () => {
+      clearTimeout(handler);
+    };
+  }, [debounceValue]);
+
+  const handleChange = (event) => {
+    const searchTerm = event.target.value;
+    setDebounceValue(searchTerm);
+  };
+
+  if (isLoading) {
+    return (
+      <div className="p-4">
+        <h1 className="text-4xl font-bold mb-4">Kompletionist</h1>
+        <p className="text-lg">Loading...</p>
+      </div>
+    );
+  }
+
+  if (isError || !data) {
+    return (
+      <div className="p-4">
+        <h1 className="text-4xl font-bold mb-4">Kompletionist</h1>
+        <p className="text-lg text-red-500">Error fetching data</p>
+      </div>
+    );
+  }
 
   return (
     <div className="p-4">
-      <h1 className="text-4xl font-bold mb-4">Coleções de Filmes e Séries</h1>
+      <h1 className="text-4xl font-bold mb-4">Kompletionist</h1>
 
-      <MediaSearch />
+      <input
+        type="text"
+        value={debounceValue}
+        onChange={handleChange}
+        placeholder="Search for a movie or TV show"
+        className="border p-2 rounded w-full mb-4"
+      />
 
-      {Object.entries(collections).map(([collectionName, collectionData]) => (
-        <div key={collectionName} className="mb-8">
-          <h2 className="text-3xl font-semibold mb-4">{collectionName}</h2>
-          {Object.entries(collectionData).map(([category, subCategories]) => (
-            <div key={category} className="mb-4">
-              <h3 className="text-2xl font-semibold">{category}</h3>
-              <div className="">
-                {Object.entries(subCategories).map(([subCategory, items]) => (
-                  <div key={subCategory} className="mb-4">
-                    <h3 className="text-xl font-semibold mb-2">
-                      {subCategory}
-                    </h3>
-                    <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-6">
-                      {items.map((item, index) => (
-                        <div
-                          key={index}
-                          className="relative border border-gray-300 rounded-lg overflow-hidden bg-white shadow-md hover:shadow-lg transition-all"
+      {searchTerm?.length > 3 ? (
+        <MediaSearch searchTerm={searchTerm} />
+      ) : (
+        <>
+          {Object.entries(data).map(([type, items]) => (
+            <div key={type} className="mb-8">
+              <h2 className="text-3xl font-semibold mb-4">{type}</h2>
+              <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3">
+                {Object.values(items)
+                  .slice(0, 50)
+                  .map((item) => (
+                    <div
+                      key={item.id}
+                      className="relative border border-gray-300 rounded-lg overflow-hidden bg-white shadow-md hover:shadow-lg transition-all grid grid-rows-[auto,auto,1fr]"
+                    >
+                      {renderPoster(item)}
+
+                      <h3 className="text-lg font-semibold px-2 py-1">
+                        {item.title}
+                      </h3>
+
+                      <h5 className="text-lg font-semibold px-2 py-1">
+                        {item.collections.join(", ")}
+                      </h5>
+
+                      {!item.overseerrStatus && (
+                        <button
+                          className="bg-green-500 text-white px-4 py-2 rounded-lg shadow-md hover:bg-green-600 transition-colors w-full h-12 mt-auto cursor-pointer bg:disabled:bg-gray-500 bg:disabled:hover:bg-gray-500 bg:disabled:cursor-not-allowed disabled:opacity-50 disabled:cursor-not-allowed disabled:hover:bg-gray-500 disabled:bg-red-500"
+                          onClick={() => requestMedia(item)}
+                          disabled={isRequesting}
                         >
-                          {renderPoster(item)}
-
-                          <h3 className="text-lg font-semibold px-2 py-1">
-                            {item.title}
-                          </h3>
-
-                          {!item.overseerrStatus && (
-                            <button
-                              className="absolute bottom-2 left-1/2 transform -translate-x-1/2 bg-green-500 text-white px-4 py-2 rounded-lg shadow-md hover:bg-green-600 transition-colors"
-                              onClick={() => requestMedia(item)}
-                              disabled={loading}
-                            >
-                              Request
-                            </button>
-                          )}
-                        </div>
-                      ))}
+                          Request
+                        </button>
+                      )}
                     </div>
-                  </div>
-                ))}
+                  ))}
               </div>
             </div>
           ))}
-        </div>
-      ))}
+        </>
+      )}
     </div>
   );
 }
