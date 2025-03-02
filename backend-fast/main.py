@@ -1,8 +1,7 @@
 from fastapi import FastAPI, APIRouter, Query
-
-
 from fastapi.staticfiles import StaticFiles
 from cachetools import TTLCache
+from fastapi.middleware.cors import CORSMiddleware
 
 from .config import get_settings, IMAGE_CACHE_DIR
 from .collection.utils import parse_yaml_files, save_to_sqlite, fetch_media_details
@@ -15,7 +14,18 @@ from .collection.routes import (
     list_categories,
 )
 
+origins = ["*"]
+
 app = FastAPI()
+
+# Add the middleware to your application
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=origins,
+    allow_credentials=True,
+    allow_methods=["*"],  # Allows all methods
+    allow_headers=["*"],  # Allows all headers
+)
 
 # Cache configuration
 media_cache = TTLCache(maxsize=1000, ttl=3600)  # Cache for 1 hour

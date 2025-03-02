@@ -1,12 +1,14 @@
-from http.client import HTTPException
-from pathlib import Path
-
 import aiofiles
 import aiohttp
 import asyncio
 import json
 import yaml
 import time
+
+from fastapi import HTTPException
+from pathlib import Path
+from tenacity import retry, stop_after_attempt, wait_exponential
+from aiohttp import AsyncResolver, TCPConnector, ClientTimeout
 
 from ..config import (
     get_settings,
@@ -19,6 +21,13 @@ yaml_settings = dict()
 
 
 SEM = asyncio.Semaphore(5)  # Limit concurrent requests to prevent rate-limiting
+
+
+# Create a custom resolver
+resolver = AsyncResolver(nameservers=["8.8.8.8", "1.1.1.1"])
+
+# Create a timeout object
+timeout = ClientTimeout(total=30)
 
 
 # Cache for TVDB token with expiration
@@ -44,36 +53,37 @@ class TVDBTokenCache:
 token_cache = TVDBTokenCache()
 
 
-async def ensure_valid_token():
+@retry(stop=stop_after_attempt(3), wait=wait_exponential(multiplier=1, min=4, max=10))
+async def ensure_valid_token(session):
     """Ensure we have a valid TVDB token, fetching a new one if needed."""
     if token_cache.is_valid():
         return token_cache.get_token()
 
     settings = get_settings()
 
-    async with aiohttp.ClientSession() as session:
-        url = "https://api4.thetvdb.com/v4/login"
-        payload = {"apikey": settings.tvdb_api_key}
+    url = "https://api4.thetvdb.com/v4/login"
+    payload = {"apikey": settings.tvdb_api_key}
 
-        # If using user-supported model, include PIN
-        if hasattr(settings, "tvdb_pin") and settings.tvdb_pin:
-            payload["pin"] = settings.tvdb_pin
+    # If using user-supported model, include PIN
+    if hasattr(settings, "tvdb_pin") and settings.tvdb_pin:
+        payload["pin"] = settings.tvdb_pin
 
-        async with session.post(url, json=payload) as response:
-            if response.status != 200:
-                raise HTTPException(
-                    status_code=401, detail="Failed to authenticate with TVDB API"
-                )
+    async with session.post(url, json=payload) as response:
 
-            data = await response.json()
-            token = data.get("data", {}).get("token")
+        data = await response.json()
 
-            if token:
-                # Cache the token (default 30 days validity)
-                token_cache.set_token(token)
-                return token
+        if response.status != 200:
+            raise HTTPException(
+                status_code=401, detail="Failed to authenticate with TVDB API"
+            )
 
-            raise HTTPException(status_code=401, detail="No token in TVDB response")
+        token = data.get("data", {}).get("token")
+        if token:
+            # Cache the token (default 30 days validity)
+            token_cache.set_token(token)
+            return token
+
+        raise HTTPException(status_code=401, detail="No token in TVDB response")
 
 
 def parse_yaml_files(directory: str):
@@ -185,14 +195,11 @@ async def fetch_json(session, url, headers=None):
                     return await response.json()
                 elif response.status == 401:
                     token_cache.set_token(None)
-                    raise HTTPException(
-                        status_code=401, detail="API authentication failed"
-                    )
+                    print("TVDB token expired, fetching new token")
+                    pass
                 else:
-                    raise HTTPException(
-                        status_code=response.status,
-                        detail=f"API error: {response.status}",
-                    )
+                    print(f"API error: {response.status} for {url.split('?')[0]}")
+                    pass
         except aiohttp.ClientError:
             print(f"Error fetching data from {url}")
             pass
@@ -215,7 +222,7 @@ async def fetch_tmdb_details(session, movie_id):
 
 async def fetch_tvdb_details(session, show_id):
     """Fetch TV show details from TVDb API."""
-    token = await ensure_valid_token()
+    token = await ensure_valid_token(session)
 
     url = f"https://api4.thetvdb.com/v4/series/{show_id}"
     headers = {"Authorization": f"Bearer {token}"}
@@ -237,7 +244,9 @@ async def fetch_media_details():
         async with db.execute("SELECT id FROM shows WHERE details IS NULL") as cursor:
             show_ids = [row[0] for row in await cursor.fetchall()]
 
-    async with aiohttp.ClientSession() as session:
+    # Create a connector with the resolver
+    connector = TCPConnector(resolver=resolver)
+    async with aiohttp.ClientSession(timeout=timeout, connector=connector) as session:
         movie_tasks = [fetch_tmdb_details(session, movie_id) for movie_id in movie_ids]
         show_tasks = [fetch_tvdb_details(session, show_id) for show_id in show_ids]
 
@@ -289,7 +298,7 @@ async def cache_tvdb_poster(session, image_url, media_id, media_type):
         return None
 
     # Ensure token is valid before making the request
-    token = await ensure_valid_token()
+    token = await ensure_valid_token(session)
 
     ext = Path(image_url).suffix or ".jpg"
     filename = f"{media_type}_{media_id}{ext}"
