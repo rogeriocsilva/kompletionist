@@ -1,3 +1,4 @@
+from http.client import HTTPException
 from pathlib import Path
 
 import aiofiles
@@ -5,6 +6,7 @@ import aiohttp
 import asyncio
 import json
 import yaml
+import time
 
 from ..config import (
     get_settings,
@@ -15,7 +17,63 @@ from ..config import (
 
 yaml_settings = dict()
 
+
 SEM = asyncio.Semaphore(5)  # Limit concurrent requests to prevent rate-limiting
+
+
+# Cache for TVDB token with expiration
+class TVDBTokenCache:
+    def __init__(self):
+        self.token = None
+        self.expiry = 0  # Unix timestamp when token expires
+
+    def set_token(self, token, expires_in=2592000):  # Default 30 days (in seconds)
+        self.token = token
+        self.expiry = time.time() + expires_in
+
+    def get_token(self):
+        if self.token and time.time() < self.expiry:
+            return self.token
+        return None
+
+    def is_valid(self):
+        return self.token is not None and time.time() < self.expiry
+
+
+# Global token cache
+token_cache = TVDBTokenCache()
+
+
+async def ensure_valid_token():
+    """Ensure we have a valid TVDB token, fetching a new one if needed."""
+    if token_cache.is_valid():
+        return token_cache.get_token()
+
+    settings = get_settings()
+
+    async with aiohttp.ClientSession() as session:
+        url = "https://api4.thetvdb.com/v4/login"
+        payload = {"apikey": settings.tvdb_api_key}
+
+        # If using user-supported model, include PIN
+        if hasattr(settings, "tvdb_pin") and settings.tvdb_pin:
+            payload["pin"] = settings.tvdb_pin
+
+        async with session.post(url, json=payload) as response:
+            if response.status != 200:
+                raise HTTPException(
+                    status_code=401, detail="Failed to authenticate with TVDB API"
+                )
+
+            data = await response.json()
+            token = data.get("data", {}).get("token")
+
+            if token:
+                # Cache the token (default 30 days validity)
+                token_cache.set_token(token)
+                return token
+
+            raise HTTPException(status_code=401, detail="No token in TVDB response")
 
 
 def parse_yaml_files(directory: str):
@@ -119,20 +177,40 @@ def save_to_sqlite(movies, shows):
 
 
 async def fetch_json(session, url, headers=None):
-    async with session.get(url, headers=headers) as response:
-        if response.status == 200:
-            return await response.json()
-        return None
-
-
-async def fetch_json(session, url, headers=None):
     """Fetch JSON data from a URL with rate limiting."""
     async with SEM:
         try:
             async with session.get(url, headers=headers) as response:
                 if response.status == 200:
                     return await response.json()
+                print(f"Error fetching data from {url}, status: {response.status}")
         except aiohttp.ClientError:
+            print(f"Error fetching data from {url}")
+            pass
+    return None
+
+
+async def fetch_tvdb_json(session, url, headers=None):
+    """Fetch JSON from URL."""
+    async with SEM:
+        try:
+            async with session.get(url, headers=headers) as response:
+                if response.status == 200:
+                    return await response.json()
+                elif response.status == 401:
+                    # Token might be expired despite our cache thinking it's valid
+                    # Force token refresh on next call
+                    token_cache.set_token(None)
+                    raise HTTPException(
+                        status_code=401, detail="TVDB authentication failed"
+                    )
+                else:
+                    raise HTTPException(
+                        status_code=response.status,
+                        detail=f"TVDB API error: {response.status}",
+                    )
+        except aiohttp.ClientError:
+            print(f"Error fetching data from {url}")
             pass
     return None
 
@@ -153,11 +231,12 @@ async def fetch_tmdb_details(session, movie_id):
 
 async def fetch_tvdb_details(session, show_id):
     """Fetch TV show details from TVDb API."""
-    settings = get_settings()
+    token = await ensure_valid_token()
 
     url = f"https://api4.thetvdb.com/v4/series/{show_id}"
-    headers = {"Authorization": f"Bearer {settings.tvdb_api_key}"}
-    data = await fetch_json(session, url, headers=headers)
+    headers = {"Authorization": f"Bearer {token}"}
+
+    data = await fetch_tvdb_json(session, url, headers=headers)
 
     if data and "data" in data and "image" in data["data"]:
         data["cached_poster"] = await cache_poster(
