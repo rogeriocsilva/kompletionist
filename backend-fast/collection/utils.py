@@ -177,20 +177,6 @@ def save_to_sqlite(movies, shows):
 
 
 async def fetch_json(session, url, headers=None):
-    """Fetch JSON data from a URL with rate limiting."""
-    async with SEM:
-        try:
-            async with session.get(url, headers=headers) as response:
-                if response.status == 200:
-                    return await response.json()
-                print(f"Error fetching data from {url}, status: {response.status}")
-        except aiohttp.ClientError:
-            print(f"Error fetching data from {url}")
-            pass
-    return None
-
-
-async def fetch_tvdb_json(session, url, headers=None):
     """Fetch JSON from URL."""
     async with SEM:
         try:
@@ -198,16 +184,14 @@ async def fetch_tvdb_json(session, url, headers=None):
                 if response.status == 200:
                     return await response.json()
                 elif response.status == 401:
-                    # Token might be expired despite our cache thinking it's valid
-                    # Force token refresh on next call
                     token_cache.set_token(None)
                     raise HTTPException(
-                        status_code=401, detail="TVDB authentication failed"
+                        status_code=401, detail="API authentication failed"
                     )
                 else:
                     raise HTTPException(
                         status_code=response.status,
-                        detail=f"TVDB API error: {response.status}",
+                        detail=f"API error: {response.status}",
                     )
         except aiohttp.ClientError:
             print(f"Error fetching data from {url}")
@@ -223,7 +207,7 @@ async def fetch_tmdb_details(session, movie_id):
     data = await fetch_json(session, url)
 
     if data and "poster_path" in data:
-        data["cached_poster"] = await cache_poster(
+        data["cached_poster"] = await cache_tmdb_poster(
             session, data["poster_path"], movie_id, "movie"
         )
     return data
@@ -236,10 +220,10 @@ async def fetch_tvdb_details(session, show_id):
     url = f"https://api4.thetvdb.com/v4/series/{show_id}"
     headers = {"Authorization": f"Bearer {token}"}
 
-    data = await fetch_tvdb_json(session, url, headers=headers)
+    data = await fetch_json(session, url, headers=headers)
 
     if data and "data" in data and "image" in data["data"]:
-        data["cached_poster"] = await cache_poster(
+        data["cached_poster"] = await cache_tvdb_poster(
             session, data["data"]["image"], show_id, "show"
         )
     return data
@@ -278,7 +262,7 @@ async def fetch_media_details():
         await db.commit()
 
 
-async def cache_poster(session, poster_url, media_id, media_type):
+async def cache_tmdb_poster(session, poster_url, media_id, media_type):
     """Download and cache movie/show posters locally."""
     if not poster_url:
         return None
@@ -291,6 +275,39 @@ async def cache_poster(session, poster_url, media_id, media_type):
         return f"/images/{filename}"  # Return cached URL
 
     async with session.get(f"https://image.tmdb.org/t/p/w500{poster_url}") as response:
+        if response.status == 200:
+            async with aiofiles.open(file_path, "wb") as f:
+                await f.write(await response.read())
+            return f"/images/{filename}"
+
+    return None
+
+
+async def cache_tvdb_poster(session, image_url, media_id, media_type):
+    """Download and cache TV show posters from TVDB locally."""
+    if not image_url:
+        return None
+
+    # Ensure token is valid before making the request
+    token = await ensure_valid_token()
+
+    ext = Path(image_url).suffix or ".jpg"
+    filename = f"{media_type}_{media_id}{ext}"
+    file_path = IMAGE_CACHE_DIR / filename
+
+    if file_path.exists():
+        return f"/images/{filename}"  # Return cached URL
+
+    # TVDB images are usually direct URLs, not paths like TMDB
+    # If it's a full URL, use it directly, otherwise construct it
+    image_full_url = (
+        image_url
+        if image_url.startswith("http")
+        else f"https://artworks.thetvdb.com{image_url}"
+    )
+
+    headers = {"Authorization": f"Bearer {token}"}
+    async with session.get(image_full_url, headers=headers) as response:
         if response.status == 200:
             async with aiofiles.open(file_path, "wb") as f:
                 await f.write(await response.read())
