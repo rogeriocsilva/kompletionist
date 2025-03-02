@@ -10,12 +10,19 @@ interface IMoviesHook extends IPaginatedHook {
 
 interface IMoviesHookProps {
   page: number;
+  pageSize: number;
+  searchQuery: string | null;
 }
 
-export function useMovies({ page }: IMoviesHookProps): IMoviesHook {
+export function useMovies({
+  page,
+  pageSize,
+  searchQuery,
+}: IMoviesHookProps): IMoviesHook {
   const { data, isFetching, isError } = useQuery({
-    queryKey: ["movies", page],
-    queryFn: () => getMovies({ page: page, page_size: 9 }),
+    queryKey: ["movies", page, pageSize, searchQuery],
+    queryFn: () =>
+      getMovies({ page: page, page_size: pageSize, search_query: searchQuery }),
     select: ({ data }) => data,
   });
 

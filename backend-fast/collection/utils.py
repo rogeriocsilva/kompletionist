@@ -106,7 +106,9 @@ def parse_yaml_files(directory: str):
                                 if isinstance(items, dict):
                                     for id, title in items.items():
                                         if isinstance(title, str):
-                                            if subcategory.endswith("(TMDb IDs)"):
+                                            if subcategory.endswith(
+                                                "Missing (TMDb IDs)"
+                                            ):
                                                 if id not in parsed_movies:
                                                     parsed_movies[id] = {
                                                         "title": title,
@@ -122,7 +124,9 @@ def parse_yaml_files(directory: str):
                                                     parsed_movies[id][
                                                         "categories"
                                                     ].append(category)
-                                            elif subcategory.endswith("(TVDb IDs)"):
+                                            elif subcategory.endswith(
+                                                "Missing (TVDb IDs)"
+                                            ):
                                                 if id not in parsed_shows:
                                                     parsed_shows[id] = {
                                                         "title": title,

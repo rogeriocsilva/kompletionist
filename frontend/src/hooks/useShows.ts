@@ -10,12 +10,19 @@ interface IShowsHook extends IPaginatedHook {
 
 interface IShowsHookProps {
   page: number;
+  pageSize: number;
+  searchQuery: string | null;
 }
 
-export function useShows({ page }: IShowsHookProps): IShowsHook {
+export function useShows({
+  page,
+  pageSize,
+  searchQuery,
+}: IShowsHookProps): IShowsHook {
   const { data, isFetching, isError } = useQuery({
-    queryKey: ["shows", page],
-    queryFn: () => getShows({ page: page, page_size: 9 }),
+    queryKey: ["shows", page, pageSize, searchQuery],
+    queryFn: () =>
+      getShows({ page: page, page_size: pageSize, search_query: searchQuery }),
     select: ({ data }) => data,
   });
 

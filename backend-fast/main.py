@@ -63,16 +63,18 @@ def search(
 def get_movies(
     page: int = Query(1, alias="page", ge=1),
     page_size: int = Query(10, alias="page_size", ge=1, le=100),
+    query: str = Query("", alias="search_query"),
 ):
-    return paginated_movies(page, page_size)
+    return paginated_movies(page, page_size, query)
 
 
 @prefix_router.get("/shows")
 def get_shows(
     page: int = Query(1, alias="page", ge=1),
     page_size: int = Query(10, alias="page_size", ge=1, le=100),
+    query: str = Query("", alias="search_query"),
 ):
-    return paginated_shows(page, page_size)
+    return paginated_shows(page, page_size, query)
 
 
 @prefix_router.get("/categories/")

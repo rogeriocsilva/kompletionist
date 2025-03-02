@@ -1,8 +1,8 @@
 import { API_URL } from "@/api/http";
-import { IMedia } from "@/api/types";
 import { Button } from "@heroui/button";
 import { Image } from "@heroui/image";
 import { Card, CardHeader, CardBody, CardFooter } from "@heroui/card";
+import { IMedia } from "@/types";
 
 interface Props {
   media: IMedia;
@@ -21,7 +21,7 @@ export function MediaCard({ media }: Props) {
       <CardBody className="overflow-visible w-full h-72">
         <Image
           alt={`${media.title} poster`}
-          className="object-cover rounded-xl"
+          className="rounded-xl"
           src={API_URL + media.details?.cached_poster}
           width="100%"
           height="100%"

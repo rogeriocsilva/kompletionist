@@ -5,13 +5,11 @@ import json
 from ..config import get_db_connection
 
 
-def paginated_movies(page: int, page_size: int):
+def paginated_movies(page: int, page_size: int, query: str):
     conn = get_db_connection()
     cursor = conn.cursor()
 
-    cursor.execute(
-        "SELECT id, title, categories, details FROM movies",
-    )
+    cursor.execute("SELECT * FROM movies WHERE title LIKE ?", (f"%{query}%",))
     movies = cursor.fetchall()
 
     conn.close()
@@ -39,12 +37,13 @@ def paginated_movies(page: int, page_size: int):
     }
 
 
-def paginated_shows(page: int, page_size: int):
+def paginated_shows(page: int, page_size: int, query: str):
     conn = get_db_connection()
     cursor = conn.cursor()
 
     cursor.execute(
-        "SELECT id, title, categories, details FROM shows",
+        "SELECT id, title, categories, details FROM shows WHERE title LIKE ?",
+        (f"%{query}%",),
     )
     shows = cursor.fetchall()
 
