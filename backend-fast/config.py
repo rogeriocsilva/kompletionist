@@ -1,9 +1,13 @@
+from pathlib import Path
+
 import sqlite3
 import aiosqlite
 
 from functools import lru_cache
 from typing import Optional
 from pydantic_settings import BaseSettings
+
+IMAGE_CACHE_DIR = Path("cached_images")
 
 
 def get_db_connection():

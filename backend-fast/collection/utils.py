@@ -1,19 +1,21 @@
-from fastapi import HTTPException
 from pathlib import Path
 
 import aiofiles
 import aiohttp
 import asyncio
 import json
-import sqlite3
 import yaml
 
-from ..config import get_settings, get_db_connection, get_async_db_connection
+from ..config import (
+    get_settings,
+    get_db_connection,
+    get_async_db_connection,
+    IMAGE_CACHE_DIR,
+)
 
 yaml_settings = dict()
 
 SEM = asyncio.Semaphore(5)  # Limit concurrent requests to prevent rate-limiting
-IMAGE_CACHE_DIR = Path("cached_images")
 
 
 def parse_yaml_files(directory: str):
@@ -41,6 +43,7 @@ def parse_yaml_files(directory: str):
                                                     parsed_movies[id] = {
                                                         "title": title,
                                                         "categories": [],
+                                                        "type": "movie",
                                                     }
                                                 if (
                                                     category
@@ -56,6 +59,7 @@ def parse_yaml_files(directory: str):
                                                     parsed_shows[id] = {
                                                         "title": title,
                                                         "categories": [],
+                                                        "type": "show",
                                                     }
                                                 if (
                                                     category
@@ -214,183 +218,3 @@ async def cache_poster(session, poster_url, media_id, media_type):
             return f"/images/{filename}"
 
     return None
-
-
-def paginated_movies(page: int, per_page: int):
-    conn = get_db_connection()
-    cursor = conn.cursor()
-
-    offset = (page - 1) * per_page
-    cursor.execute(
-        "SELECT id, title, categories, details FROM movies LIMIT ? OFFSET ?",
-        (per_page, offset),
-    )
-    movies = cursor.fetchall()
-
-    conn.close()
-
-    return {
-        "movies": [
-            {
-                "id": row[0],
-                "title": row[1],
-                "categories": json.loads(row[2]),
-                "details": json.loads(row[3]) if row[3] else None,
-            }
-            for row in movies
-        ]
-    }
-
-
-def paginated_shows(page: int, per_page: int):
-    conn = get_db_connection()
-    cursor = conn.cursor()
-
-    offset = (page - 1) * per_page
-    cursor.execute(
-        "SELECT id, title, categories, details FROM shows LIMIT ? OFFSET ?",
-        (per_page, offset),
-    )
-    shows = cursor.fetchall()
-
-    conn.close()
-
-    return {
-        "shows": [
-            {
-                "id": row[0],
-                "title": row[1],
-                "categories": json.loads(row[2]),
-                "details": json.loads(row[3]) if row[3] else None,
-            }
-            for row in shows
-        ]
-    }
-
-
-def search_media(query: str):
-    conn = sqlite3.connect("parsed_data.db", check_same_thread=False)
-    cursor = conn.cursor()
-    cursor.execute("SELECT * FROM movies WHERE title LIKE ?", (f"%{query}%",))
-    movies = cursor.fetchall()
-    cursor.execute("SELECT * FROM shows WHERE title LIKE ?", (f"%{query}%",))
-    shows = cursor.fetchall()
-    conn.close()
-    return {
-        "movies": {
-            "movies": [
-                {
-                    "id": row[0],
-                    "title": row[1],
-                    "categories": json.loads(row[2]),
-                    "details": json.loads(row[3]) if row[3] else None,
-                }
-                for row in movies
-            ]
-        },
-        "shows": [
-            {
-                "id": row[0],
-                "title": row[1],
-                "categories": json.loads(row[2]),
-                "details": json.loads(row[3]) if row[3] else None,
-            }
-            for row in shows
-        ],
-    }
-
-
-def list_categories(page: int, page_size: int):
-    """Fetch paginated list of unique categories."""
-    conn = get_db_connection()
-    cursor = conn.cursor()
-
-    cursor.execute(
-        "SELECT DISTINCT json_each.value FROM movies, json_each(movies.categories)"
-    )
-    movie_categories = {row[0] for row in cursor.fetchall()}
-
-    cursor.execute(
-        "SELECT DISTINCT json_each.value FROM shows, json_each(shows.categories)"
-    )
-    show_categories = {row[0] for row in cursor.fetchall()}
-
-    conn.close()
-
-    all_categories = sorted(movie_categories | show_categories)
-
-    total = len(all_categories)
-    start = (page - 1) * page_size
-    end = start + page_size
-    paginated_categories = all_categories[start:end]
-
-    return {
-        "categories": paginated_categories,
-        "total": total,
-        "page": page,
-        "page_size": page_size,
-        "total_pages": (total // page_size) + (1 if total % page_size > 0 else 0),
-    }
-
-
-def list_media_by_category(
-    category_name: str,
-    page: int,
-    page_size: int,
-):
-    """Fetch paginated movies and shows under a specific category."""
-    conn = get_db_connection()
-    cursor = conn.cursor()
-
-    # Fetch all movies in the category
-    cursor.execute(
-        "SELECT * FROM movies WHERE ? IN (SELECT value FROM json_each(categories))",
-        (category_name,),
-    )
-    all_movies = [
-        {
-            "id": row[0],
-            "title": row[1],
-            "categories": json.loads(row[2]),
-            "details": json.loads(row[3]) if row[3] else None,
-            "type": "movie",
-        }
-        for row in cursor.fetchall()
-    ]
-
-    # Fetch all shows in the category
-    cursor.execute(
-        "SELECT * FROM shows WHERE ? IN (SELECT value FROM json_each(categories))",
-        (category_name,),
-    )
-    all_shows = [
-        {
-            "id": row[0],
-            "title": row[1],
-            "categories": json.loads(row[2]),
-            "details": json.loads(row[3]) if row[3] else None,
-            "type": "show",
-        }
-        for row in cursor.fetchall()
-    ]
-
-    conn.close()
-
-    if not all_movies and not all_shows:
-        raise HTTPException(status_code=404, detail="Category not found or empty")
-
-    # Merge movies & shows and apply pagination
-    all_media = all_movies + all_shows
-    total = len(all_media)
-    start = (page - 1) * page_size
-    end = start + page_size
-    paginated_media = all_media[start:end]
-
-    return {
-        "category": category_name,
-        "media": paginated_media,
-        "total": total,
-        "page": page,
-        "page_size": page_size,
-        "total_pages": (total // page_size) + (1 if total % page_size > 0 else 0),
-    }
